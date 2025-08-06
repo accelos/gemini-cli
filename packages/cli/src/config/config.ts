@@ -67,6 +67,7 @@ export interface CliArgs {
   proxy: string | undefined;
   includeDirectories: string[] | undefined;
   loadMemoryFromIncludeDirectories: boolean | undefined;
+  accelosPrompt: string | undefined;
 }
 
 export async function parseArguments(): Promise<CliArgs> {
@@ -220,15 +221,24 @@ export async function parseArguments(): Promise<CliArgs> {
         'If true, when refreshing memory, GEMINI.md files should be loaded from all directories that are added. If false, GEMINI.md files should only be loaded from the primary working directory.',
       default: false,
     })
+    .option('accelos-prompt', {
+      type: 'string',
+      description: 'Send prompt to Accelos AI agent instead of Gemini',
+    })
     .version(await getCliVersion()) // This will enable the --version flag based on package.json
     .alias('v', 'version')
     .help()
     .alias('h', 'help')
     .strict()
-    .check((argv) => {
+    .check((argv: any) => {
       if (argv.prompt && argv.promptInteractive) {
         throw new Error(
           'Cannot use both --prompt (-p) and --prompt-interactive (-i) together',
+        );
+      }
+      if (argv.accelosPrompt && (argv.prompt || argv.promptInteractive)) {
+        throw new Error(
+          'Cannot use --accelos-prompt with --prompt or --prompt-interactive',
         );
       }
       return true;
@@ -414,7 +424,7 @@ export async function loadCliConfig(
       settings.loadMemoryFromIncludeDirectories ||
       false,
     debugMode,
-    question: argv.promptInteractive || argv.prompt || '',
+    question: argv.promptInteractive || argv.prompt || argv.accelosPrompt || '',
     fullContext: argv.allFiles || argv.all_files || false,
     coreTools: settings.coreTools || undefined,
     excludeTools,

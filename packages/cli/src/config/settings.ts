@@ -63,6 +63,13 @@ export interface AccessibilitySettings {
   disableLoadingPhrases?: boolean;
 }
 
+export interface AccelosSettings {
+  endpoint?: string;
+  apiKey?: string;
+  enabled?: boolean;
+  options?: Record<string, unknown>;
+}
+
 export interface Settings {
   theme?: string;
   customThemes?: Record<string, CustomTheme>;
@@ -130,6 +137,9 @@ export interface Settings {
   includeDirectories?: string[];
 
   loadMemoryFromIncludeDirectories?: boolean;
+
+  // Accelos AI agent configuration
+  accelos?: AccelosSettings;
 }
 
 export interface SettingsError {
