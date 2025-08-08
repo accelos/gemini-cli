@@ -24,7 +24,7 @@
     {
       "name": "check-guardrails",
       "description": "Check code against the guardrails deterministically",
-      "command": "a0", 
+      "command": "./sdlc-linter", 
       "arguments": ["analyze-git-diff"],
       "options": {
         "env": {
