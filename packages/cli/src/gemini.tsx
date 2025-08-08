@@ -45,7 +45,7 @@ import { validateNonInteractiveAuth } from './validateNonInterActiveAuth.js';
 import { checkForUpdates } from './ui/utils/updateCheck.js';
 import { handleAutoUpdate } from './utils/handleAutoUpdate.js';
 import { appEvents, AppEvent } from './utils/events.js';
-import { getAccelosAgent, AccelosConfig } from './services/AccelosAgent.js';
+import { getTriggeredAccelosCommand, executeAccelosCommand } from './config/accelosCommands.js';
 import process from 'node:process';
 
 export function validateDnsResolutionOrder(
@@ -152,6 +152,20 @@ export async function main() {
   }
 
   const argv = await parseArguments();
+  
+  // Check if an accelos command was triggered
+  if (argv.accelosCommands && argv.accelosCommands.length > 0) {
+    const triggeredCommand = getTriggeredAccelosCommand(argv, argv.accelosCommands);
+    if (triggeredCommand) {
+      try {
+        await executeAccelosCommand(triggeredCommand);
+        process.exit(0);
+      } catch (error) {
+        console.error('Accelos command execution failed:', error);
+        process.exit(1);
+      }
+    }
+  }
   
   // Early debug logging
   if (argv.debug) {
@@ -329,12 +343,6 @@ export async function main() {
     prompt_length: input.length,
   });
 
-  // Check if this is an accelos-prompt request
-  if (argv.accelosPrompt) {
-    await handleAccelosPrompt(argv.accelosPrompt, input, config, settings);
-    process.exit(0);
-  }
-
   // Non-interactive mode handled by runNonInteractive
   const nonInteractiveConfig = await loadNonInteractiveConfig(
     config,
@@ -345,57 +353,6 @@ export async function main() {
 
   await runNonInteractive(nonInteractiveConfig, input, prompt_id);
   process.exit(0);
-}
-
-async function handleAccelosPrompt(
-  accelosPromptArg: string,
-  stdinInput: string,
-  config: Config,
-  settings: LoadedSettings
-): Promise<void> {
-  try {
-    // Combine CLI argument and stdin input
-    const fullPrompt = stdinInput ? `${accelosPromptArg}\n\n${stdinInput}` : accelosPromptArg;
-    
-    // Load Accelos configuration from settings file and environment variables
-    const accelosConfig: AccelosConfig = {
-      endpoint: settings.merged.accelos?.endpoint || process.env.ACCELOS_ENDPOINT,
-      apiKey: settings.merged.accelos?.apiKey || process.env.ACCELOS_API_KEY,
-      options: settings.merged.accelos?.options || {},
-    };
-    
-    // Initialize the Accelos agent
-    const agent = getAccelosAgent(accelosConfig);
-    
-    // Initialize the agent (validate config, test connection, etc.)
-    const initialized = await agent.initialize();
-    if (!initialized) {
-      console.error('Failed to initialize Accelos agent. Please check your configuration.');
-      console.error('Make sure you have set ACCELOS_ENDPOINT and ACCELOS_API_KEY environment variables.');
-      process.exit(1);
-    }
-    
-    // Prepare context information
-    const context = {
-      workingDirectory: config.getProjectRoot(),
-      // TODO: Add more context as needed (files, memory content, etc.)
-    };
-    
-    console.log('Sending prompt to Accelos agent...');
-    
-    // Send the prompt to the Accelos agent
-    const response = await agent.sendPrompt(fullPrompt, context);
-    
-    if (response.success) {
-      console.log(response.text);
-    } else {
-      console.error('Accelos agent error:', response.error);
-      process.exit(1);
-    }
-  } catch (error) {
-    console.error('Failed to process Accelos prompt:', error);
-    process.exit(1);
-  }
 }
 
 function setWindowTitle(title: string, settings: LoadedSettings) {

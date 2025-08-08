@@ -30,6 +30,7 @@ import { Extension, annotateActiveExtensions } from './extension.js';
 import { getCliVersion } from '../utils/version.js';
 import { loadSandboxConfig } from './sandboxConfig.js';
 import { resolvePath } from '../utils/resolvePath.js';
+import { loadAccelosCommands, createYargsOptionForCommand, AccelosCommandConfig } from './accelosCommands.js';
 
 // Simple console logger for now - replace with actual logger if available
 const logger = {
@@ -68,9 +69,15 @@ export interface CliArgs {
   includeDirectories: string[] | undefined;
   loadMemoryFromIncludeDirectories: boolean | undefined;
   accelosPrompt: string | undefined;
+  // Dynamic accelos command options
+  accelosCommands?: AccelosCommandConfig[];
+  [key: string]: any;
 }
 
 export async function parseArguments(): Promise<CliArgs> {
+  // Load accelos commands first
+  const accelosCommands = loadAccelosCommands();
+  
   const yargsInstance = yargs(hideBin(process.argv))
     .scriptName('gemini')
     .usage(
@@ -224,7 +231,14 @@ export async function parseArguments(): Promise<CliArgs> {
     .option('accelos-prompt', {
       type: 'string',
       description: 'Send prompt to Accelos AI agent instead of Gemini',
-    })
+    });
+
+  // Dynamically add accelos command options
+  for (const command of accelosCommands) {
+    yargsInstance.option(command.name, createYargsOptionForCommand(command));
+  }
+
+  yargsInstance
     .version(await getCliVersion()) // This will enable the --version flag based on package.json
     .alias('v', 'version')
     .help()
@@ -249,7 +263,9 @@ export async function parseArguments(): Promise<CliArgs> {
 
   // The import format is now only controlled by settings.memoryImportFormat
   // We no longer accept it as a CLI argument
-  return result as CliArgs;
+  const cliArgs = result as CliArgs;
+  cliArgs.accelosCommands = accelosCommands;
+  return cliArgs;
 }
 
 // This function is now a thin wrapper around the server's implementation.
