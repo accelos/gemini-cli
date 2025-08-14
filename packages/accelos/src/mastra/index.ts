@@ -3,8 +3,8 @@ import { PinoLogger } from '@mastra/loggers';
 import { google } from '@ai-sdk/google';
 import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
-import { fileAnalyzerTool, webSearchTool, codeAnalysisTool, rcaLoaderTool, guardrailLoaderTool, guardrailCrudTool, reviewStorageTool, reviewLoaderTool, debugStoreTool, claudeCodeTool } from '../tools/index.js';
-import { codeReviewWorkflow, simpleCodeReviewWorkflow } from '../workflows/index.js';
+import { fileAnalyzerTool, webSearchTool, codeAnalysisTool, rcaLoaderTool, guardrailLoaderTool, guardrailCrudTool, reviewStorageTool, reviewLoaderTool, debugStoreTool, claudeCodeTool, claudeCodeStreamingTool } from '../tools/index.js';
+import { codeReviewWorkflow, simpleCodeReviewWorkflow, reviewToPRStreamingWorkflow } from '../workflows/index.js';
 import { defaultConfig, getCompatiblePaths } from '../config.js';
 import { GuardrailStore } from '../tools/shared-guardrail-store.js';
 import * as dotenv from 'dotenv';
@@ -13,6 +13,14 @@ import { productionReadinessPrompt } from '../prompts/production_readiness_promp
 import { guardrailAgentPrompt } from '../prompts/guardrail_agent_prompt.js';
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
+import { createStreamingSSEHandler } from '../api/streaming-sse.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+// ES module equivalent of __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 dotenv.config();
 
 // Initialize guardrails at startup for Mastra
@@ -139,6 +147,7 @@ export const mastra = new Mastra({
   workflows: {
     'code-review-workflow': codeReviewWorkflow,
     'simple-code-review-workflow': simpleCodeReviewWorkflow,
+    'review-to-pr-streaming-workflow': reviewToPRStreamingWorkflow,
   },
   logger: new PinoLogger({
     name: 'Mastra',
@@ -151,5 +160,58 @@ export const mastra = new Mastra({
       openAPIDocs: true,
       swaggerUI: true,
     },
+    apiRoutes: [
+      {
+        path: "/api/streaming-sse",
+        method: "GET",
+        createHandler: createStreamingSSEHandler,
+      },
+      {
+        path: "/streaming-test.html",
+        method: "GET",
+        createHandler: async () => {
+          return async (c: any) => {
+            try {
+              // Try multiple possible locations for the HTML file
+              const possiblePaths = [
+                path.join(process.cwd(), 'src', 'streaming-test.html'),
+                path.join(__dirname, '..', 'streaming-test.html'),
+                path.join(__dirname, '..', '..', 'src', 'streaming-test.html'),
+                path.resolve('src/streaming-test.html'),
+              ];
+              
+              let htmlContent = null;
+              let foundPath = null;
+              
+              for (const htmlPath of possiblePaths) {
+                try {
+                  if (fs.existsSync(htmlPath)) {
+                    htmlContent = fs.readFileSync(htmlPath, 'utf8');
+                    foundPath = htmlPath;
+                    break;
+                  }
+                } catch (err) {
+                  // Continue to next path
+                  continue;
+                }
+              }
+              
+              if (!htmlContent) {
+                // Debug: show what paths were tried
+                return c.text(`Streaming test page not found. Tried paths:\n${possiblePaths.join('\n')}\nCurrent working directory: ${process.cwd()}`, 404);
+              }
+              
+              // Use Hono context methods
+              c.header('Content-Type', 'text/html');
+              c.header('Cache-Control', 'no-cache');
+              return c.body(htmlContent);
+            } catch (error) {
+              // Return 404 using Hono pattern with debug info
+              return c.text(`Error loading streaming test page: ${error instanceof Error ? error.message : String(error)}`, 500);
+            }
+          };
+        },
+      }
+    ],
   },
 });
