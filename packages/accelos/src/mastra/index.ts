@@ -3,7 +3,7 @@ import { PinoLogger } from '@mastra/loggers';
 import { google } from '@ai-sdk/google';
 import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
-import { fileAnalyzerTool, webSearchTool, codeAnalysisTool, rcaLoaderTool, guardrailLoaderTool, guardrailCrudTool, reviewStorageTool, reviewLoaderTool, debugStoreTool, claudeCodeTool, claudeCodeStreamingTool } from '../tools/index.js';
+import { fileAnalyzerTool, webSearchTool, codeAnalysisTool, rcaLoaderTool, guardrailLoaderTool, guardrailCrudTool, reviewStorageTool, reviewLoaderTool, debugStoreTool, claudeCodeTool, prCreationWorkflowTool } from '../tools/index.js';
 import { codeReviewWorkflow, simpleCodeReviewWorkflow, reviewToPRStreamingWorkflow } from '../workflows/index.js';
 import { defaultConfig, getCompatiblePaths } from '../config.js';
 import { GuardrailStore } from '../tools/shared-guardrail-store.js';
@@ -117,6 +117,8 @@ const productionReadinessAgent = new Agent({
     {
       guardrailCrudTool,
       reviewStorage: reviewStorageTool,
+      reviewLoader: reviewLoaderTool,
+      prCreation: prCreationWorkflowTool,
       ...githubTools,
     },
     memory,
