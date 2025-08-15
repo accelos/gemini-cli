@@ -35,6 +35,7 @@ import { LibSQLStore } from "@mastra/libsql";
 import { createStreamingSSEHandler } from '../api/streaming-sse.js';
 import { promises as fs, existsSync, readFileSync } from 'fs';
 import { createGuardrailsListHandler, createGuardrailByIdHandler } from '../api/guardrails.js';
+import { createReviewsListHandler, createReviewByIdHandler } from '../api/reviews.js';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -332,6 +333,16 @@ export const mastra = new Mastra({
         path: "/api/guardrails/:id",
         method: "GET",
         createHandler: createGuardrailByIdHandler,
+      },
+      {
+        path: "/api/reviews",
+        method: "GET",
+        createHandler: createReviewsListHandler,
+      },
+      {
+        path: "/api/reviews/:id",
+        method: "GET",
+        createHandler: createReviewByIdHandler,
       },
       {
         path: "/streaming-test.html",
