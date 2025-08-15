@@ -34,6 +34,7 @@ import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 import { createStreamingSSEHandler } from '../api/streaming-sse.js';
 import { promises as fs, existsSync, readFileSync } from 'fs';
+import { createGuardrailsListHandler, createGuardrailByIdHandler } from '../api/guardrails.js';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -321,6 +322,16 @@ export const mastra = new Mastra({
         path: "/api/streaming-sse",
         method: "GET",
         createHandler: createStreamingSSEHandler,
+      },
+      {
+        path: "/api/guardrails",
+        method: "GET",
+        createHandler: createGuardrailsListHandler,
+      },
+      {
+        path: "/api/guardrails/:id",
+        method: "GET",
+        createHandler: createGuardrailByIdHandler,
       },
       {
         path: "/streaming-test.html",
