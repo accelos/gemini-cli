@@ -16,7 +16,7 @@ import {
   debugStoreTool,
   claudeCodeTool,
   ekgCrudTool,
-  claudeCodeStreamingTool,
+  prCreationWorkflowTool
 } from '../tools/index.js';
 import {
   codeReviewWorkflow,
@@ -245,20 +245,23 @@ const accelosAnthropicAgent = new Agent({
 });
 
 const productionReadinessAgent = new Agent({
-  name: 'production-readiness-agent',
-  instructions: productionReadinessPrompt,
-  model: anthropic('claude-3-7-sonnet-20250219'),
-  defaultGenerateOptions: {
-    maxSteps: 1000,
-  },
-  tools: {
-    guardrailCrudTool,
-    reviewStorage: reviewStorageTool,
-    ekgCrud: ekgCrudTool,
-    ...githubTools,
-  },
-  memory,
-});
+    name: 'production-readiness-agent',
+    instructions: productionReadinessPrompt,
+    model: anthropic('claude-3-7-sonnet-20250219'),
+    defaultGenerateOptions: {
+      maxSteps: 500,
+    },
+    tools: 
+    {
+      guardrailCrudTool,
+      reviewStorage: reviewStorageTool,
+      ekgCrud: ekgCrudTool,
+      reviewLoader: reviewLoaderTool,
+      prCreation: prCreationWorkflowTool,
+      ...githubTools,
+    },
+    memory,
+  });
 
 const guardrailAgent = new Agent({
   name: 'guardrail-agent',
