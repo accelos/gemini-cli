@@ -6,6 +6,7 @@
 
 import { createWorkflow, createStep } from "@mastra/core/workflows";
 import { z } from "zod";
+import { execSync } from "child_process";
 import { claudeCodeTool } from "../tools/claude-code.js";
 import { reviewLoaderTool } from "../tools/review-loader.js";
 import { githubTools } from "../mcp/github-mcp-client.js";
@@ -252,54 +253,44 @@ const claudeCodeAnalysisStep = createStep({
 
     const startTime = Date.now();
 
-    // Group findings by category for targeted prompts
+    // Process all findings together with single Claude Code execution
     const findings = reviewData.findings || [];
-    const findingsByCategory = findings.reduce((acc, finding) => {
-      const category = finding.category || 'general';
-      if (!acc[category]) acc[category] = [];
-      acc[category].push(finding);
-      return acc;
-    }, {} as Record<string, Array<typeof findings[0]>>);
-
+    console.log(`🔍 [${new Date().toLocaleTimeString()}] Processing ${findings.length} findings`);
+    
     let allFixesProposed: string[] = [];
     let combinedAnalysisResult = "";
 
-    // Process each category with specific prompts
-    for (const [category, findings] of Object.entries(findingsByCategory)) {
-      console.log(`🔍 [${new Date().toLocaleTimeString()}] Processing ${findings.length} ${category} findings`);
-      
-      const categoryPrompt = generateCategorySpecificPrompt(category, findings, reviewData, dryRun);
+    if (findings.length > 0) {
+      const generalPrompt = generateGeneralPrompt(findings, reviewData, dryRun);
       
       try {
         // Use real Claude Code SDK tool
         const claudeResult = await claudeCodeTool.execute({
           context: {
-            prompt: categoryPrompt,
+            prompt: generalPrompt,
             options: {
               mode: "streaming",
               cwd: process.env.REPOSITORY_PATH,
-              customSystemPrompt: `You are an expert ${category} engineer. Focus on ${category} best practices and provide actionable solutions.`,
-              maxTurns: 25,
+              customSystemPrompt: `You are a seasoned staff engineer. Work efficiently and concisely. Implement fixes without lengthy explanations.`,
+              maxTurns: 200,
               permissionMode: dryRun ? "plan" : "acceptEdits",
               allowedTools: ["read", "write", "edit", "grep", "bash"],
-              debug: true,
+              debug: false,
             },
           },
-          runtimeContext: runtimeContext!,
+          runtimeContext,
         });
 
-        const categoryResult = claudeResult?.result || "No result from Claude Code";
-        combinedAnalysisResult += `\n\n## ${category.toUpperCase()} Analysis:\n${categoryResult}`;
+        combinedAnalysisResult = claudeResult?.result || "No result from Claude Code";
         
-        // Extract fixes for this category
-        const categoryFixes = findings.map((f: any) => `${category}: ${f.recommendation}`);
-        allFixesProposed.push(...categoryFixes);
+        // Extract fixes from findings
+        allFixesProposed = findings.map((f: any) => f.recommendation);
         
-        console.log(`✅ [${new Date().toLocaleTimeString()}] Completed ${category} analysis (${claudeResult?.metadata?.turnsUsed || 0} turns)`);
+        console.log(`✅ [${new Date().toLocaleTimeString()}] Completed analysis (${claudeResult?.metadata?.turnsUsed || 0} turns)`);
         
       } catch (error) {
-        console.error(`❌ [${new Date().toLocaleTimeString()}] Failed ${category} analysis:`, error);
-        combinedAnalysisResult += `\n\n## ${category.toUpperCase()} Analysis:\nError: ${error instanceof Error ? error.message : String(error)}`;
+        console.error(`❌ [${new Date().toLocaleTimeString()}] Analysis failed:`, error);
+        combinedAnalysisResult = `Error: ${error instanceof Error ? error.message : String(error)}`;
       }
     }
 
@@ -355,51 +346,100 @@ const finalizeStep = createStep({
     console.log(`🏁 [${new Date().toLocaleTimeString()}] Finalizing workflow results for review ${reviewData.id}`);
 
     let branchName: string | undefined;
-    let commitHash: string | undefined;
     let prUrl: string | undefined;
     let errors: string[] = [];
 
     if (!dryRun && fixesProposed.length > 0) {
       branchName = `fix/review-${reviewData.id}-${Date.now()}`;
-      console.log(`🌱 [${new Date().toLocaleTimeString()}] Creating branch: ${branchName}`);
+      const workingDir = process.env.REPOSITORY_PATH || process.cwd();
+      console.log(`🌱 [${new Date().toLocaleTimeString()}] Creating branch: ${branchName} in ${workingDir}`);
       
       try {
-        // Create git branch locally
-        const { execSync } = require('child_process');
-        execSync(`git checkout -b ${branchName}`, { stdio: 'inherit' });
+        // Create git branch locally in the same directory where Claude Code ran
+        execSync(`git checkout -b ${branchName}`, { 
+          stdio: 'inherit',
+          cwd: workingDir 
+        });
         console.log(`✅ [${new Date().toLocaleTimeString()}] Git branch created successfully`);
         
         if (autoCommit) {
-          // Stage and commit changes
-          execSync('git add .', { stdio: 'inherit' });
-          const commitMessage = `Fix issues from production review ${reviewData.id}\n\nAddresses:\n${fixesProposed.slice(0, 5).map(fix => `- ${fix}`).join('\n')}${fixesProposed.length > 5 ? `\n... and ${fixesProposed.length - 5} more fixes` : ''}`;
-          execSync(`git commit -m "${commitMessage}"`, { stdio: 'inherit' });
-          
-          // Push branch to remote
-          execSync(`git push -u origin ${branchName}`, { stdio: 'inherit' });
-          console.log(`💾 [${new Date().toLocaleTimeString()}] Changes committed and pushed`);
-          
-          if (createPR && githubTools['create-pr']) {
-            // Create PR using GitHub MCP tools
-            const prTitle = `Fix issues from production review ${reviewData.id}`;
-            const prBody = `## Summary\nThis PR addresses ${fixesProposed.length} issues identified in production review ${reviewData.id}:\n\n${fixesProposed.map(fix => `- ${fix}`).join('\n')}\n\n## Review Details\n- **Review Type**: ${reviewData.type}\n- **Original Score**: ${reviewData.score}/100\n- **Findings**: ${reviewData.findings?.length || 0} issues\n\n## Changes Made\nAutomated fixes applied by Claude Code based on review recommendations.\n\n🤖 Generated with Claude Code via Mastra workflow`;
+          // Check if there are any changes to commit
+          const statusResult = execSync('git status --porcelain', { 
+            encoding: 'utf8',
+            stdio: 'pipe',
+            cwd: workingDir 
+          }).trim();
+
+          if (!statusResult) {
+            console.warn(`⚠️ [${new Date().toLocaleTimeString()}] No changes detected - Claude Code may not have made any modifications`);
+            errors.push('No changes to commit - Claude Code did not make any file modifications');
+          } else {
+            console.log(`📝 [${new Date().toLocaleTimeString()}] Changes detected, staging files...`);
             
+            // Stage only modified/new files (ignoring .gitignore entries)
             try {
-              // Note: This is a placeholder - actual GitHub MCP tool usage would depend on the specific tool interface
-              console.log(`🔄 [${new Date().toLocaleTimeString()}] Creating pull request via GitHub MCP...`);
-              prUrl = `https://github.com/owner/repo/pull/123`; // Placeholder - real implementation would use MCP tools
-              console.log(`✅ [${new Date().toLocaleTimeString()}] Pull request created: ${prUrl}`);
-            } catch (prError) {
-              const errorMsg = `Failed to create PR: ${prError instanceof Error ? prError.message : String(prError)}`;
-              console.error(`❌ [${new Date().toLocaleTimeString()}] ${errorMsg}`);
-              errors.push(errorMsg);
+              // Add only tracked files that were modified
+              execSync('git add -u', { 
+                stdio: 'pipe',
+                cwd: workingDir 
+              });
+              // Add any new files that aren't ignored
+              execSync('git add . --ignore-errors', { 
+                stdio: 'pipe',
+                cwd: workingDir 
+              });
+            } catch (addError) {
+              console.warn(`Staging attempt failed, trying alternative approach: ${addError instanceof Error ? addError.message : String(addError)}`);
+              // If that fails, try a more conservative approach - just add modified tracked files
+              execSync('git add -u', { 
+                stdio: 'pipe',
+                cwd: workingDir 
+              });
+            }
+            
+            const fixList = fixesProposed.slice(0, 5).map(fix => `- ${fix}`).join('\n');
+            const additionalFixes = fixesProposed.length > 5 ? `\n... and ${fixesProposed.length - 5} more fixes` : '';
+            const commitMessage = `Fix issues from production review ${reviewData.id}
+
+Addresses:
+${fixList}${additionalFixes}`;
+            
+            execSync(`git commit -m "${commitMessage}"`, { 
+              stdio: 'inherit',
+              cwd: workingDir 
+            });
+            
+            // Push branch to remote
+            execSync(`git push -u origin ${branchName}`, { 
+              stdio: 'inherit',
+              cwd: workingDir 
+            });
+            console.log(`💾 [${new Date().toLocaleTimeString()}] Changes committed and pushed`);
+            
+            if (createPR) {
+              try {
+                // Try GitHub CLI first as it's more reliable
+                console.log(`🔄 [${new Date().toLocaleTimeString()}] Creating pull request using GitHub CLI...`);
+                prUrl = (await createPRWithGitHubCLI(branchName!, reviewData, fixesProposed, workingDir)) || undefined;
+                
+                if (prUrl) {
+                  console.log(`✅ [${new Date().toLocaleTimeString()}] Pull request created: ${prUrl}`);
+                } else {
+                  errors.push('Failed to create PR with GitHub CLI');
+                }
+              } catch (prError) {
+                const errorMsg = `Failed to create PR: ${prError instanceof Error ? prError.message : String(prError)}`;
+                console.error(`❌ [${new Date().toLocaleTimeString()}] ${errorMsg}`);
+                errors.push(errorMsg);
+              }
             }
           }
         }
       } catch (gitError) {
-        const errorMsg = `Git operations failed: ${gitError instanceof Error ? gitError.message : String(gitError)}`;
-        console.error(`❌ [${new Date().toLocaleTimeString()}] ${errorMsg}`);
-        errors.push(errorMsg);
+        const errorMsg = gitError instanceof Error ? gitError.message : String(gitError);
+        const detailedMsg = `Git operations failed: ${errorMsg}. Ensure git is configured and repository has proper permissions.`;
+        console.error(`❌ [${new Date().toLocaleTimeString()}] ${detailedMsg}`);
+        errors.push(detailedMsg);
       }
     }
 
@@ -432,34 +472,69 @@ export const reviewToPRStreamingWorkflow = createWorkflow({
 .then(finalizeStep)
 .commit();
 
-// Helper function to generate category-specific prompts
-function generateCategorySpecificPrompt(
-  category: string, 
+// Helper function to create PR using GitHub CLI as fallback
+async function createPRWithGitHubCLI(
+  branchName: string,
+  reviewData: any,
+  fixesProposed: string[],
+  workingDir: string
+): Promise<string | null> {
+  try {
+    const prTitle = `Fix issues from production review ${reviewData.id}`;
+    const fixList = fixesProposed.slice(0, 5).map(fix => `- ${fix}`).join('\\n');
+    const additionalFixes = fixesProposed.length > 5 ? `\\n... and ${fixesProposed.length - 5} more fixes` : '';
+    
+    const prBody = `## Summary
+This PR addresses ${fixesProposed.length} issues identified in production review ${reviewData.id}:
+
+${fixList}${additionalFixes}
+
+## Review Details
+- **Review Type**: ${reviewData.type}
+- **Original Score**: ${reviewData.score}/100
+- **Findings**: ${reviewData.findings?.length || 0} issues
+
+## Changes Made
+Automated fixes applied by Claude Code based on review recommendations.
+
+🤖 Generated with Claude Code via Mastra workflow`;
+
+    // Create PR using gh CLI
+    const prResult = execSync(
+      `gh pr create --title "${prTitle}" --body "${prBody.replace(/"/g, '\\"')}" --head "${branchName}" --base "main"`,
+      {
+        encoding: 'utf8',
+        stdio: 'pipe',
+        cwd: workingDir
+      }
+    ).trim();
+
+    // Extract PR URL from gh CLI output
+    const prUrlRegex = /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/;
+    const prUrlMatch = prUrlRegex.exec(prResult);
+    return prUrlMatch ? prUrlMatch[0] : null;
+
+  } catch (error) {
+    console.error(`GitHub CLI error: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+
+// Helper function to generate streamlined general prompt
+function generateGeneralPrompt(
   findings: any[], 
   reviewData: any, 
   dryRun: boolean
 ): string {
-  const baseContext = `Review ID: ${reviewData.id}\nReview Type: ${reviewData.type}\nCurrent Score: ${reviewData.score}/100\n\n`;
+  const baseContext = `Review: ${reviewData.id} (${reviewData.type}) - Score: ${reviewData.score}/100\n\n`;
   const findingsText = findings.map((f, i) => 
-    `${i + 1}. [${f.severity?.toUpperCase() || 'UNKNOWN'}] ${f.issue}\n   Recommendation: ${f.recommendation}`
-  ).join('\n\n');
+    `${i + 1}. [${f.severity?.toUpperCase() || 'MEDIUM'}] ${f.issue}\n   Fix: ${f.recommendation}`
+  ).join('\n');
 
-  const dryRunText = dryRun ? "\n\nIMPORTANT: This is a DRY RUN - provide recommendations and analysis only, do not modify any files." : "";
+  const actionText = dryRun 
+    ? "ANALYZE and provide recommendations only - do not modify files." 
+    : "IMPLEMENT all fixes efficiently.";
 
-  switch (category.toLowerCase()) {
-    case 'security':
-      return `${baseContext}SECURITY ANALYSIS REQUIRED\n\nSecurity Issues Found:\n${findingsText}\n\nTASK: For each security issue:\n1. Analyze the security vulnerability and potential impact\n2. Implement secure code fixes following OWASP best practices\n3. Add input validation, sanitization, or access controls as needed\n4. Verify fixes don't introduce new vulnerabilities\n5. Add security-focused tests if appropriate${dryRunText}`;
-    
-    case 'performance':
-      return `${baseContext}PERFORMANCE OPTIMIZATION REQUIRED\n\nPerformance Issues Found:\n${findingsText}\n\nTASK: For each performance issue:\n1. Analyze the performance bottleneck and measure impact\n2. Implement optimizations (caching, algorithm improvements, etc.)\n3. Ensure optimizations don't compromise code readability\n4. Add performance monitoring or benchmarks\n5. Document optimization strategies used${dryRunText}`;
-    
-    case 'testing':
-      return `${baseContext}TESTING IMPROVEMENTS REQUIRED\n\nTesting Issues Found:\n${findingsText}\n\nTASK: For each testing issue:\n1. Analyze test coverage gaps and missing scenarios\n2. Implement comprehensive unit, integration, or e2e tests\n3. Add test data factories and proper mocking\n4. Ensure tests are maintainable and well-documented\n5. Add CI/CD test automation if needed${dryRunText}`;
-    
-    case 'configuration':
-      return `${baseContext}CONFIGURATION IMPROVEMENTS REQUIRED\n\nConfiguration Issues Found:\n${findingsText}\n\nTASK: For each configuration issue:\n1. Analyze configuration problems and environment impacts\n2. Implement proper configuration management\n3. Add environment-specific configs and validation\n4. Ensure secure handling of secrets and sensitive data\n5. Document configuration requirements${dryRunText}`;
-    
-    default:
-      return `${baseContext}CODE QUALITY IMPROVEMENTS REQUIRED\n\nIssues Found:\n${findingsText}\n\nTASK: For each issue:\n1. Analyze the problem and its impact on code quality\n2. Implement clean, maintainable solutions\n3. Follow established coding standards and patterns\n4. Add proper error handling and logging\n5. Ensure changes don't break existing functionality${dryRunText}`;
-  }
+  return `${baseContext}Issues to address:\n${findingsText}\n\nTASK: ${actionText} Work directly and concisely.`;
 }
