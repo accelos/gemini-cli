@@ -32,6 +32,7 @@ const executionModeSchema = z.enum([
 const claudeCodeOptionsSchema = z.object({
   mode: executionModeSchema.describe("Execution mode for the tool"),
   cwd: z.string().optional().describe("Working directory for Claude Code execution (defaults to REPOSITORY_PATH env var)"),
+  rcaDirectory: z.string().optional().describe("RCA directory for Claude Code execution (defaults to RCA_DIRECTORY_PATH env var)"),
   customSystemPrompt: z.string().optional().describe("Custom system prompt for the Claude Code session"),
   appendSystemPrompt: z.string().optional().describe("Additional system prompt to append"),
   maxTurns: z.number().int().positive().max(50).optional().describe("Maximum number of conversation turns (default: 20)"),
@@ -181,9 +182,17 @@ export const claudeCodeTool = createTool({
 
       // Determine working directory - use provided cwd, or REPOSITORY_PATH env var, or process.cwd()
       const workingDirectory = options.cwd || process.env.REPOSITORY_PATH || process.cwd();
+      
+      // Determine RCA directory - use provided rcaDirectory, or RCA_DIRECTORY_PATH env var, or fallback to ACCELOS_DATA_DIRECTORY_PATH/RCA
+      const rcaDirectory = options.rcaDirectory || 
+        process.env.RCA_DIRECTORY_PATH || 
+        (process.env.ACCELOS_DATA_DIRECTORY_PATH ? `${process.env.ACCELOS_DATA_DIRECTORY_PATH}/RCA` : undefined);
 
       if (mode === "streaming") {
         console.log(`📁 [${new Date().toLocaleTimeString()}] Claude Code: Working directory: ${workingDirectory}`);
+        if (rcaDirectory) {
+          console.log(`📁 [${new Date().toLocaleTimeString()}] Claude Code: RCA directory: ${rcaDirectory}`);
+        }
       }
 
       // Prepare Claude Code options
