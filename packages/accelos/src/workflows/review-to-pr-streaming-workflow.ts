@@ -66,15 +66,6 @@ const loadReviewStep = createStep({
     
     console.log(`🔄 [${new Date().toLocaleTimeString()}] Loading review assessment data for ${reviewAssessmentId}`);
 
-    // Emit streaming event for workflow start
-    if (writer) {
-      writer.write({
-        type: "workflow-start",
-        args: { reviewAssessmentId, dryRun, autoCommit, createPR },
-        status: "starting"
-      });
-    }
-
     try {
       let reviewData;
 
@@ -140,16 +131,6 @@ const loadReviewStep = createStep({
         };
 
         console.log(`✅ [${new Date().toLocaleTimeString()}] Mock review created: ${reviewData.type} (Score: ${reviewData.score}/100) with ${reviewData.findings.length} findings`);
-        
-        // Emit streaming event for mock review loaded
-        if (writer) {
-          writer.write({
-            type: "review-loaded",
-            args: { reviewId: reviewData.id, type: reviewData.type, score: reviewData.score },
-            status: "success",
-            result: { findingsCount: reviewData.findings.length, mockData: true }
-          });
-        }
       } else {
         // Use real review loader tool for production reviews
         const reviewResult = await reviewLoaderTool.execute({
@@ -186,16 +167,6 @@ const loadReviewStep = createStep({
         };
 
         console.log(`✅ [${new Date().toLocaleTimeString()}] Loaded review: ${reviewData.type} (Score: ${reviewData.score}/100) with ${reviewData.issues.length} issues`);
-        
-        // Emit streaming event for real review loaded
-        if (writer) {
-          writer.write({
-            type: "review-loaded",
-            args: { reviewId: reviewData.id, type: reviewData.type, score: reviewData.score },
-            status: "success",
-            result: { findingsCount: reviewData.findings.length, mockData: false }
-          });
-        }
       }
 
       return {
@@ -208,16 +179,6 @@ const loadReviewStep = createStep({
       };
     } catch (error) {
       console.error(`❌ [${new Date().toLocaleTimeString()}] Failed to load review:`, error);
-      
-      // Emit streaming event for error
-      if (writer) {
-        writer.write({
-          type: "review-load-error",
-          args: { reviewAssessmentId },
-          status: "error",
-          result: { error: error instanceof Error ? error.message : String(error) }
-        });
-      }
       
       return {
         reviewAssessmentId,
@@ -291,15 +252,6 @@ const claudeCodeAnalysisStep = createStep({
     
     console.log(`🚀 [${new Date().toLocaleTimeString()}] Starting Claude Code analysis of review findings for ${reviewData.id}`);
 
-    // Emit streaming event for Claude Code analysis start
-    if (writer) {
-      writer.write({
-        type: "claude-code-analysis",
-        args: { reviewId: reviewData.id, findingsCount: reviewData.findings?.length || 0, dryRun },
-        status: "starting"
-      });
-    }
-
     const startTime = Date.now();
 
     // Process all findings together with single Claude Code execution
@@ -337,33 +289,9 @@ const claudeCodeAnalysisStep = createStep({
         
         console.log(`✅ [${new Date().toLocaleTimeString()}] Completed analysis (${claudeResult?.metadata?.turnsUsed || 0} turns)`);
         
-        // Emit streaming event for Claude Code analysis success
-        if (writer) {
-          writer.write({
-            type: "claude-code-analysis",
-            args: { reviewId: reviewData.id, turnsUsed: claudeResult?.metadata?.turnsUsed || 0 },
-            status: "success",
-            result: { 
-              analysisComplete: true, 
-              fixesProposed: allFixesProposed.length,
-              summary: combinedAnalysisResult.substring(0, 200) + (combinedAnalysisResult.length > 200 ? '...' : '')
-            }
-          });
-        }
-        
       } catch (error) {
         console.error(`❌ [${new Date().toLocaleTimeString()}] Analysis failed:`, error);
         combinedAnalysisResult = `Error: ${error instanceof Error ? error.message : String(error)}`;
-        
-        // Emit streaming event for Claude Code analysis error
-        if (writer) {
-          writer.write({
-            type: "claude-code-analysis",
-            args: { reviewId: reviewData.id },
-            status: "error",
-            result: { error: error instanceof Error ? error.message : String(error) }
-          });
-        }
       }
     }
 
@@ -418,15 +346,6 @@ const finalizeStep = createStep({
     
     console.log(`🏁 [${new Date().toLocaleTimeString()}] Finalizing workflow results for review ${reviewData.id}`);
 
-    // Emit streaming event for finalization start
-    if (writer) {
-      writer.write({
-        type: "workflow-finalize",
-        args: { reviewId: reviewData.id, fixesProposed: fixesProposed.length, dryRun, autoCommit, createPR },
-        status: "starting"
-      });
-    }
-
     let branchName: string | undefined;
     let prUrl: string | undefined;
     let errors: string[] = [];
@@ -435,15 +354,6 @@ const finalizeStep = createStep({
       branchName = `fix/review-${reviewData.id}-${Date.now()}`;
       const workingDir = process.env.REPOSITORY_PATH || process.cwd();
       console.log(`🌱 [${new Date().toLocaleTimeString()}] Creating branch: ${branchName} in ${workingDir}`);
-      
-      // Emit streaming event for git operations start
-      if (writer) {
-        writer.write({
-          type: "git-operations",
-          args: { branchName, workingDir },
-          status: "starting"
-        });
-      }
       
       try {
         // Create git branch locally in the same directory where Claude Code ran
@@ -508,14 +418,6 @@ ${fixList}${additionalFixes}`;
             console.log(`💾 [${new Date().toLocaleTimeString()}] Changes committed and pushed`);
             
             if (createPR) {
-              // Emit streaming event for PR creation start
-              if (writer) {
-                writer.write({
-                  type: "pr-creation",
-                  args: { branchName, reviewId: reviewData.id },
-                  status: "starting"
-                });
-              }
               
               try {
                 // Try GitHub CLI first as it's more reliable
@@ -524,43 +426,13 @@ ${fixList}${additionalFixes}`;
                 
                 if (prUrl) {
                   console.log(`✅ [${new Date().toLocaleTimeString()}] Pull request created: ${prUrl}`);
-                  
-                  // Emit streaming event for PR creation success
-                  if (writer) {
-                    writer.write({
-                      type: "pr-creation",
-                      args: { branchName, reviewId: reviewData.id },
-                      status: "success",
-                      result: { prUrl }
-                    });
-                  }
                 } else {
                   errors.push('Failed to create PR with GitHub CLI');
-                  
-                  // Emit streaming event for PR creation failure
-                  if (writer) {
-                    writer.write({
-                      type: "pr-creation",
-                      args: { branchName, reviewId: reviewData.id },
-                      status: "error",
-                      result: { error: 'Failed to create PR with GitHub CLI' }
-                    });
-                  }
                 }
               } catch (prError) {
                 const errorMsg = `Failed to create PR: ${prError instanceof Error ? prError.message : String(prError)}`;
                 console.error(`❌ [${new Date().toLocaleTimeString()}] ${errorMsg}`);
                 errors.push(errorMsg);
-                
-                // Emit streaming event for PR creation error
-                if (writer) {
-                  writer.write({
-                    type: "pr-creation",
-                    args: { branchName, reviewId: reviewData.id },
-                    status: "error",
-                    result: { error: errorMsg }
-                  });
-                }
               }
             }
           }
@@ -575,26 +447,6 @@ ${fixList}${additionalFixes}`;
 
     const success = errors.length === 0 && (dryRun || fixesProposed.length > 0);
     console.log(`${success ? '✅' : '❌'} [${new Date().toLocaleTimeString()}] Workflow ${success ? 'completed successfully' : 'completed with errors'}! Review: ${reviewData.type}, Score: ${reviewData.score}/100, Fixes: ${fixesProposed.length}, Branch: ${branchName || 'N/A'}, PR: ${prUrl || 'N/A'}`);
-
-    // Emit final streaming event for workflow completion
-    if (writer) {
-      writer.write({
-        type: "workflow-complete",
-        args: { 
-          reviewId: reviewData.id, 
-          success, 
-          fixesProposed: fixesProposed.length,
-          branchName,
-          prUrl 
-        },
-        status: success ? "success" : "error",
-        result: { 
-          summary: `Workflow ${success ? 'completed successfully' : 'completed with errors'}`,
-          phase: "complete",
-          errors: errors.length > 0 ? errors : undefined
-        }
-      });
-    }
 
     return {
       success,

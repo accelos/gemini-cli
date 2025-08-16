@@ -82,7 +82,21 @@ export const prCreationWorkflowTool = createTool({
       // If writer is available, pipe the workflow stream to it
       if (writer) {
         console.log(`🔄 Piping workflow stream to agent writer`);
-        await stream.pipeTo(writer);
+        try {
+          await stream.pipeTo(writer);
+        } catch (streamError) {
+          // Handle stream lock errors gracefully
+          if (streamError instanceof Error && streamError.message.includes('WritableStream is locked')) {
+            console.warn(`⚠️  Stream writer is locked, falling back to manual consumption`);
+            // Consume the stream manually without piping
+            for await (const chunk of stream) {
+              console.log(`📊 Workflow progress: ${chunk.type} from ${chunk.from || 'workflow'}`);
+            }
+          } else {
+            // Re-throw other stream errors
+            throw streamError;
+          }
+        }
       } else {
         console.log(`ℹ️  No writer available, running workflow without streaming to agent`);
         // Consume the stream without piping

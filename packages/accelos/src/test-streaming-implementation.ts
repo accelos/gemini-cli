@@ -24,7 +24,7 @@ async function testStreamingImplementation() {
     // Test streaming with a mock review ID
     console.log('🚀 Starting streaming test with mock review ID...');
     
-    const testQuery = 'Create a PR for review sse-streaming-test-demo with dry run enabled';
+    const testQuery = 'Please use the prCreation tool to create a PR from review ID "sse-streaming-test-demo" with dryRun=true and autoCommit=false.';
     
     // Use the agent's streamVNext method to get real-time streaming
     const stream = await productionReadinessAgent.streamVNext(testQuery);
@@ -42,9 +42,10 @@ async function testStreamingImplementation() {
       
       console.log(`🔄 Event ${eventCount}: ${chunk.type || 'unknown'} from ${chunk.from || 'agent'}`);
       
-      // Log specific workflow events
-      if (chunk.payload && chunk.payload.type) {
-        console.log(`   📊 Workflow event: ${chunk.payload.type} - ${chunk.payload.status || 'no status'}`);
+      // Log payload details if available
+      if (chunk.payload) {
+        const payloadSummary = typeof chunk.payload === 'string' ? chunk.payload.substring(0, 100) : JSON.stringify(chunk.payload, null, 2).substring(0, 200);
+        console.log(`   📊 Payload: ${payloadSummary}${payloadSummary.length >= 100 ? '...' : ''}`);
       }
       
       // Limit logging for demo purposes
@@ -66,23 +67,30 @@ async function testStreamingImplementation() {
     console.log(`   Final result available: ${finalResult ? 'Yes' : 'No'}`);
     
     // Analyze received events
-    const workflowEvents = receivedEvents.filter(e => e.payload && e.payload.type);
-    console.log(`   Workflow streaming events: ${workflowEvents.length}`);
+    const workflowEvents = receivedEvents.filter(e => e.from && (e.from.includes('workflow') || e.from.includes('step')));
+    console.log(`   Workflow-related events: ${workflowEvents.length}`);
     
     if (workflowEvents.length > 0) {
-      console.log('   Event types received:');
-      const eventTypes = [...new Set(workflowEvents.map(e => e.payload.type))];
-      eventTypes.forEach(type => {
-        const count = workflowEvents.filter(e => e.payload.type === type).length;
-        console.log(`     - ${type}: ${count} events`);
+      console.log('   Event sources:');
+      const eventSources = [...new Set(workflowEvents.map(e => e.from))];
+      eventSources.forEach(source => {
+        const count = workflowEvents.filter(e => e.from === source).length;
+        console.log(`     - ${source}: ${count} events`);
       });
+    }
+    
+    // Look for tool calls
+    const toolEvents = receivedEvents.filter(e => e.type && e.type.includes('tool'));
+    if (toolEvents.length > 0) {
+      console.log(`   Tool execution events: ${toolEvents.length}`);
     }
     
     return {
       success: finalStatus === 'success',
       eventCount,
       workflowEvents: workflowEvents.length,
-      eventTypes: workflowEvents.map(e => e.payload.type)
+      toolEvents: toolEvents.length,
+      eventSources: workflowEvents.map(e => e.from)
     };
     
   } catch (error) {
