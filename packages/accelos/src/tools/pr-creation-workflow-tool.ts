@@ -43,7 +43,7 @@ export const prCreationWorkflowTool = createTool({
     errors: z.array(z.string()).optional().describe('Any errors that occurred during execution'),
     message: z.string().describe('Human-readable summary of the operation'),
   }),
-  execute: async ({ context, runtimeContext }) => {
+  execute: async ({ context, runtimeContext, writer }) => {
     const { 
       reviewAssessmentId, 
       dryRun, 
@@ -66,10 +66,11 @@ export const prCreationWorkflowTool = createTool({
     const startTime = Date.now();
 
     try {
-      // Create and execute the workflow
+      // Create and execute the workflow with streaming
       const workflowRun = await reviewToPRStreamingWorkflow.createRunAsync();
       
-      const result = await workflowRun.start({
+      // Use streamVNext to get streaming output and pipe it to the agent writer
+      const stream = await workflowRun.streamVNext({
         inputData: {
           reviewAssessmentId,
           dryRun,
@@ -78,11 +79,28 @@ export const prCreationWorkflowTool = createTool({
         }
       });
 
+      // If writer is available, pipe the workflow stream to it
+      if (writer) {
+        console.log(`🔄 Piping workflow stream to agent writer`);
+        await stream.pipeTo(writer);
+      } else {
+        console.log(`ℹ️  No writer available, running workflow without streaming to agent`);
+        // Consume the stream without piping
+        for await (const chunk of stream) {
+          // Process chunks but don't forward them anywhere
+          console.log(`📊 Workflow progress: ${chunk.type} from ${chunk.from}`);
+        }
+      }
+
+      // Get the final result after stream completion
+      const streamStatus = await stream.status;
+      const streamResult = await stream.result;
+
       const executionTime = Date.now() - startTime;
 
       // Check if workflow completed successfully
-      if (result.status === 'success' && result.result) {
-        const workflowResult = result.result;
+      if (streamStatus === 'success' && streamResult) {
+        const workflowResult = streamResult;
         
         // Extract summary information
         const summary = {
@@ -115,9 +133,9 @@ export const prCreationWorkflowTool = createTool({
         };
       } else {
         // Workflow failed or was suspended
-        const errorMessage = result.status === 'failed' 
+        const errorMessage = streamStatus === 'failed' 
           ? 'Workflow execution failed'
-          : `Workflow ended with status: ${result.status}`;
+          : `Workflow ended with status: ${streamStatus}`;
 
         return {
           success: false,
