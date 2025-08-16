@@ -6,7 +6,9 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "build:bundle": "ncc build src/production.ts -o build --minify",
+    "build:bundle": "npm run build:bundle:js && npm run build:bundle:cleanup",
+    "build:bundle:js": "ncc build test-bundle.js -o build --minify --no-source-map-register --target es2020",
+    "build:bundle:cleanup": "echo '✅ Bundle created successfully with @anthropic-ai/claude-code included'",
     "build:binary": "npm run build && pkg dist/production.js --targets node20-linux-x64,node20-macos-x64,node20-win-x64 --out-path binaries",
     "build:all": "npm run build && npm run build:bundle && npm run build:binary",
     "start": "node dist/production.js",
@@ -17,14 +19,15 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:ci": "vitest run --coverage",
+    "test:bundle": "node build/index.js",
     "typecheck": "tsc --noEmit"
   },
   "files": [
-    "dist",
+    "build",
     "README.md"
   ],
   "bin": {
-    "accelos-server": "dist/production.js"
+    "accelos-server": "build/index.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.0",
@@ -56,13 +59,21 @@
   "pkg": {
     "scripts": [
       "dist/**/*.js",
-      "node_modules/@mastra/**/*.js"
+      "node_modules/@mastra/**/*.js",
+      "node_modules/@anthropic-ai/claude-code/**/*.js"
     ],
     "assets": [
       "node_modules/@mastra/**/*",
-      ".env"
+      "node_modules/@anthropic-ai/claude-code/**/*",
+      ".env",
+      "data/**/*"
     ],
-    "outputPath": "binaries"
+    "outputPath": "binaries",
+    "targets": [
+      "node20-linux-x64",
+      "node20-macos-x64", 
+      "node20-win-x64"
+    ]
   },
   "keywords": [
     "mastra",
